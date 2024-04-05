@@ -7,6 +7,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/markusmobius/go-dateparser v1.2.1
 	github.com/stretchr/testify v1.8.4
+	github.com/xdg-go/scram v1.1.2
 	golang.org/x/crypto v0.13.0
 )
 
@@ -36,6 +37,8 @@ require (
 	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/tetratelabs/wazero v1.5.0 // indirect
 	github.com/wasilibs/go-re2 v1.4.0 // indirect
+	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
+	github.com/xdg-go/stringprep v1.0.4 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
 	golang.org/x/net v0.15.0 // indirect
 	golang.org/x/sys v0.12.0 // indirect

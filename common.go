@@ -164,6 +164,24 @@ func randomString(length int) string {
 	return fmt.Sprintf("%x", buf)[:length]
 }
 
+func setupSaslMechanism(auth authConfig, saramaCfg *sarama.Config) (error) {
+	switch strings.ToLower(auth.SASLMechanism) {
+	case "plain", "":
+		saramaCfg.Net.SASL.Mechanism = sarama.SASLMechanism(sarama.SASLTypePlaintext)
+		return nil
+	case "scram-sha512":
+		saramaCfg.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &XDGSCRAMClient{HashGeneratorFcn: SHA512} }
+		saramaCfg.Net.SASL.Mechanism = sarama.SASLMechanism(sarama.SASLTypeSCRAMSHA512)
+		return nil
+	case "scram-sha256":
+		saramaCfg.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &XDGSCRAMClient{HashGeneratorFcn: SHA256} }
+		saramaCfg.Net.SASL.Mechanism = sarama.SASLMechanism(sarama.SASLTypeSCRAMSHA256)
+		return nil
+	default:
+		return fmt.Errorf("Unsupported auth sasl mechanism: %#v", auth.SASLMechanism)
+	}
+}
+
 // setupCerts takes the paths to a tls certificate, CA, and certificate key in
 // a PEM format and returns a constructed tls.Config object.
 func setupCerts(certPath, caPath, keyPath string) (*tls.Config, error) {
@@ -207,6 +225,8 @@ type authConfig struct {
 	ClientCertKey     string `json:"client-certificate-key"`
 	SASLPlainUser     string `json:"sasl_plain_user"`
 	SASLPlainPassword string `json:"sasl_plain_password"`
+	SASLMechanism     string `json:"sasl_mechanism"`
+	SecurityProtocol  string `json:"security_protocol"`
 }
 
 func setupAuth(auth authConfig, saramaCfg *sarama.Config) error {
@@ -218,7 +238,7 @@ func setupAuth(auth authConfig, saramaCfg *sarama.Config) error {
 	case "TLS":
 		return setupAuthTLS(auth, saramaCfg)
 	case "TLS-1way":
-		return setupAuthTLS1Way(auth, saramaCfg)
+		return setupAuthTLS(auth, saramaCfg)
 	case "SASL":
 		return setupSASL(auth, saramaCfg)
 	default:
@@ -230,10 +250,19 @@ func setupSASL(auth authConfig, saramaCfg *sarama.Config) error {
 	saramaCfg.Net.SASL.Enable = true
 	saramaCfg.Net.SASL.User = auth.SASLPlainUser
 	saramaCfg.Net.SASL.Password = auth.SASLPlainPassword
+	err := setupSaslMechanism(auth, saramaCfg)
+
+	if err != nil {
+		return err;
+	}
+
+	if (strings.EqualFold(auth.SecurityProtocol, "SASL_SSL")) {
+		return setupAuthTLS(auth, saramaCfg)
+	}
 	return nil
 }
 
-func setupAuthTLS1Way(auth authConfig, saramaCfg *sarama.Config) error {
+func setupAuthTLS(auth authConfig, saramaCfg *sarama.Config) error {
 	saramaCfg.Net.TLS.Enable = true
 	saramaCfg.Net.TLS.Config = &tls.Config{}
 
@@ -252,40 +281,20 @@ func setupAuthTLS1Way(auth authConfig, saramaCfg *sarama.Config) error {
 		failf("unable to add ca-certificate at %s to certificate pool", auth.CACert)
 	}
 
-	tlsCfg := &tls.Config{RootCAs: caPool}
+	var tlsCfg *tls.Config
+	if auth.ClientCert != "" && auth.ClientCertKey != "" {
+		clientCert, err := tls.LoadX509KeyPair(auth.ClientCert, auth.ClientCertKey)
+		if err != nil {
+			return err
+		}
+		tlsCfg = &tls.Config{RootCAs: caPool, Certificates: []tls.Certificate{clientCert}}
+	} else {
+		tlsCfg = &tls.Config{RootCAs: caPool}
+
+	}
 	tlsCfg.BuildNameToCertificate()
 
 	saramaCfg.Net.TLS.Config = tlsCfg
-	return nil
-}
-
-func setupAuthTLS(auth authConfig, saramaCfg *sarama.Config) error {
-	if auth.CACert == "" || auth.ClientCert == "" || auth.ClientCertKey == "" {
-		return fmt.Errorf("client-certificate, client-certificate-key and ca-certificate are required - got auth=%#v", auth)
-	}
-
-	caString, err := os.ReadFile(auth.CACert)
-	if err != nil {
-		return fmt.Errorf("failed to read ca-certificate err=%v", err)
-	}
-
-	caPool := x509.NewCertPool()
-	ok := caPool.AppendCertsFromPEM(caString)
-	if !ok {
-		failf("unable to add ca-certificate at %s to certificate pool", auth.CACert)
-	}
-
-	clientCert, err := tls.LoadX509KeyPair(auth.ClientCert, auth.ClientCertKey)
-	if err != nil {
-		return err
-	}
-
-	tlsCfg := &tls.Config{RootCAs: caPool, Certificates: []tls.Certificate{clientCert}}
-	tlsCfg.BuildNameToCertificate()
-
-	saramaCfg.Net.TLS.Enable = true
-	saramaCfg.Net.TLS.Config = tlsCfg
-
 	return nil
 }
 
